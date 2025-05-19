@@ -28,7 +28,7 @@ import (
 
 type {{.TableName}} struct {
 {{- range .Columns }}
-    {{.Name}} {{.Type}} ` + "`gorm:\"column:{{.GormName}}\"`" + `
+    {{.Name}} {{.Type}} ` + "`gorm:\"column:{{.GormName}}{{if .IsCreatedAt}};autoCreateTime{{end}}{{if .IsUpdatedAt}};autoUpdateTime{{end}}\" json:\"{{.JSONName}}\"`" + `
 {{- end }}
 }
 
@@ -38,15 +38,19 @@ func ({{.TableName}}) TableName() string {
 `
 
 type Column struct {
-	Name     string
-	GormName string
-	Type     string
+	Name        string
+	GormName    string
+	JSONName    string
+	Type        string
+	IsCreatedAt bool
+	IsUpdatedAt bool
 }
 
+// Table struct for passing data to the template
 type Table struct {
 	TableName    string
-	DBTableName  string
 	Columns      []Column
+	DBTableName  string
 	ModelImports []string
 }
 
@@ -68,6 +72,14 @@ func main() {
 			log.Fatalf("Error loading .env file: %v", err)
 		}
 	}
+	fmt.Printf("envFile: %s\n", *envFile)
+	fmt.Println("dbUser:", os.Getenv("DB_USER"))
+	fmt.Println("dbPassword:", os.Getenv("DB_PASSWORD"))
+	fmt.Println("dbHost:", os.Getenv("DB_HOST"))
+	fmt.Println("dbPort:", os.Getenv("DB_PORT"))
+	fmt.Println("dbName:", os.Getenv("DB_NAME"))
+	fmt.Println("tables:", os.Getenv("TABLES"))
+	fmt.Println("tabls:", *tables)
 
 	// Override environment variables with command-line arguments if provided
 	if *dbUser == "" {
@@ -115,6 +127,20 @@ func generateModel(db *gorm.DB, tableName, destPath string) {
 
 	for _, columnType := range columnTypes {
 		modelColumnType := columnType.DatabaseTypeName()
+		columnName := columnType.Name()
+		isCreatedAt := false
+		isUpdatedAt := false
+
+		// Check for created_at/updated_at or similar column names
+		lowerColumnName := strings.ToLower(columnName)
+		if (strings.Contains(lowerColumnName, "created") || strings.Contains(lowerColumnName, "create")) &&
+			(columnType.DatabaseTypeName() == "datetime" || columnType.DatabaseTypeName() == "timestamp") {
+			isCreatedAt = true
+		} else if (strings.Contains(lowerColumnName, "updated") || strings.Contains(lowerColumnName, "update") || strings.Contains(lowerColumnName, "modified")) &&
+			(columnType.DatabaseTypeName() == "datetime" || columnType.DatabaseTypeName() == "timestamp") {
+			isUpdatedAt = true
+		}
+
 		// Add special handling for datetime columns
 		switch columnType.DatabaseTypeName() {
 		case "datetime", "timestamp", "date", "time":
@@ -148,10 +174,12 @@ func generateModel(db *gorm.DB, tableName, destPath string) {
 		}
 
 		column := Column{
-			Name:     camelCase(columnType.Name()),
-			Type:     modelColumnType,
-			GormName: columnType.Name(),
-			// Add other fields as necessary
+			Name:        camelCase(columnName),
+			Type:        modelColumnType,
+			GormName:    columnName,
+			JSONName:    snakeCase(columnName),
+			IsCreatedAt: isCreatedAt,
+			IsUpdatedAt: isUpdatedAt,
 		}
 		columns = append(columns, column)
 	}
@@ -189,4 +217,9 @@ func camelCase(s string) string {
 		parts[i] = strings.Title(parts[i])
 	}
 	return strings.Join(parts, "")
+}
+
+// Add a helper function for JSON tag names
+func snakeCase(s string) string {
+	return strings.ToLower(s)
 }
